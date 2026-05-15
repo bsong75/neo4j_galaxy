@@ -1,0 +1,56 @@
+services:
+  neo4j:
+    image: neo4j:5
+    container_name: neo4j_instance
+    ports:
+      - "7475:7474"
+      - "7688:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - TZ=America/New_York
+      #- NEO4J_PLUGINS=["graph-data-science"]
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: cypher-shell -u neo4j -p password "RETURN 1"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - app-net
+
+  flask_api:
+    build: ./server
+    container_name: flask_api
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=America/New_York
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+      - REACT_APP_URL=http://localhost:3005
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    networks:
+      - app-net
+
+  react_front:
+    build: ./client
+    container_name: react_front
+    ports:
+      - "3005:80"
+    depends_on:
+      - flask_api
+    networks:
+      - app-net
+
+volumes:
+  neo4j_data:
+
+networks:
+  app-net:

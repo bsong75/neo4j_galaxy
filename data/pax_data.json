@@ -1,0 +1,204 @@
+{
+    "wX|UNIFIEDPERSON|2349202": {
+        "status": "SUCCESS",
+        "data": {
+            "UNF_PSNGR_ID": "2349202",
+            "FRST_NM": "JOHN",
+            "LST_NM": "SMITH",
+            "DOB_DT": "1963-05-23",
+            "CTZNSHP_CTRY_CD": "CAN",
+            "GNDR_CD": "M",
+            "BIRTH_LOC": [
+                {
+                    "BIRTH_CTRY_CD": "USA",
+                    "BIRTH_CITY_NM": "Netherland"
+                }
+            ],
+            "RCNT_DOC_NBR": "9SD67SF4",
+            "RCNT_DOC_TYP_CD": "P",
+            "NAMES": [
+                {
+                    "NAME_INTRNL_SEQ": 1,
+                    "UNF_PSNGR_ID": "2349202",
+                    "FRST_NM": "JOHNNY",
+                    "LST_NM": "SMITH"
+                }
+            ],
+            "RELATIONSHIPS": [
+                {
+                    "RLNTNSHP_INTRNL_SEQ": 1,
+                    "UNF_PSNGR_ID": "2349102",
+                    "GV_NM": "DADDY_JOHN",
+                    "LST_NM": "SMITH",
+                    "RLTN_TYP": "EMER_C",
+                    "PHN_NBR": [
+                        "29342034",
+                        "292342342"
+                    ],
+                    "DEROG": [
+                        {
+                            "DEROG_INTRNL_SEQ": 1,
+                            "DEROG_TYP_CD": "SMUGGLING",
+                            "DEROG_SRC_CD": "CBP",
+                            "DEROG_DESC": "Human smuggling conspiracy",
+                            "DEROG_DT": "2022-07-15",
+                            "DEROG_STAT_CD": "ACTIVE",
+                            "SEIZURE_IND": "N",
+                            "SEIZURE_ITEMS": []
+                        }
+                    ],
+                    "RELATIONSHIPS": [
+                        {
+                            "RLNTNSHP_INTRNL_SEQ": 1,
+                            "UNF_PSNGR_ID": "8832010",
+                            "GV_NM": "UNCLE_BOB",
+                            "LST_NM": "SMITH",
+                            "RLTN_TYP": "FAMILY",
+                            "PHN_NBR": [
+                                "3125559090"
+                            ],
+                            "DEROG": [
+                                {
+                                    "DEROG_INTRNL_SEQ": 1,
+                                    "DEROG_TYP_CD": "NARCOTICS",
+                                    "DEROG_SRC_CD": "DEA",
+                                    "DEROG_DESC": "Methamphetamine distribution ring",
+                                    "DEROG_DT": "2021-04-10",
+                                    "DEROG_STAT_CD": "ACTIVE",
+                                    "SEIZURE_IND": "Y",
+                                    "SEIZURE_ITEMS": [
+                                        {
+                                            "SEIZURE_ITEM_NM": "Methamphetamine",
+                                            "SEIZURE_QTY": "0.8 kg",
+                                            "SEIZURE_DT": "2021-04-10"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "RLNTNSHP_INTRNL_SEQ": 2,
+                    "UNF_PSNGR_ID": "2349402",
+                    "GV_NM": "MOMMY_JOHN",
+                    "LST_NM": "SMITH",
+                    "RLTN_TYP": "EMER_C",
+                    "PHN_NBR": [
+                        "293423423",
+                        "2023423234"
+                    ],
+                    "DEROG": []
+                },
+                {
+                    "RLNTNSHP_INTRNL_SEQ": 3,
+                    "UNF_PSNGR_ID": "3349202",
+                    "GV_NM": "FRIEND_JOHN",
+                    "LST_NM": "SMITH",
+                    "RLTN_TYP": "P",
+                    "PHN_NBR": [
+                        "7193429293",
+                        "29328392423"
+                    ],
+                    "DEROG": []
+                },
+                {
+                    "RLNTNSHP_INTRNL_SEQ": 4,
+                    "UNF_PSNGR_ID": "4349202",
+                    "GV_NM": "CARLOS",
+                    "LST_NM": "REYES",
+                    "RLTN_TYP": "BUSINESS",
+                    "PHN_NBR": [
+                        "5551234567"
+                    ],
+                    "DEROG": [
+                        {
+                            "DEROG_INTRNL_SEQ": 1,
+                            "DEROG_TYP_CD": "NARCOTICS",
+                            "DEROG_SRC_CD": "DEA",
+                            "DEROG_DESC": "Known narcotics distribution network",
+                            "DEROG_DT": "2020-03-22",
+                            "DEROG_STAT_CD": "ACTIVE",
+                            "SEIZURE_IND": "Y",
+                            "SEIZURE_ITEMS": [
+                                {
+                                    "SEIZURE_ITEM_NM": "Heroin",
+                                    "SEIZURE_QTY": "1.2 kg",
+                                    "SEIZURE_DT": "2020-03-22"
+                                }
+                            ]
+                        },
+                        {
+                            "DEROG_INTRNL_SEQ": 2,
+                            "DEROG_TYP_CD": "WEAPONS",
+                            "DEROG_SRC_CD": "ATF",
+                            "DEROG_DESC": "Illegal firearms trafficking",
+                            "DEROG_DT": "2022-11-05",
+                            "DEROG_STAT_CD": "ACTIVE",
+                            "SEIZURE_IND": "Y",
+                            "SEIZURE_ITEMS": [
+                                {
+                                    "SEIZURE_ITEM_NM": "Firearms",
+                                    "SEIZURE_QTY": "3 units",
+                                    "SEIZURE_DT": "2022-11-05"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "RLNTNSHP_INTRNL_SEQ": 5,
+                    "UNF_PSNGR_ID": "2345203",
+                    "GV_NM": "MARIA",
+                    "LST_NM": "GONZALEZ",
+                    "RLTN_TYP": "TRAVEL_COMP",
+                    "PHN_NBR": [
+                        "5559876543",
+                        "5552223344"
+                    ],
+                    "DEROG": [
+                        {
+                            "DEROG_INTRNL_SEQ": 1,
+                            "DEROG_TYP_CD": "FRAUD",
+                            "DEROG_SRC_CD": "ICE",
+                            "DEROG_DESC": "Document fraud - falsified visa application",
+                            "DEROG_DT": "2023-06-18",
+                            "DEROG_STAT_CD": "ACTIVE",
+                            "SEIZURE_IND": "N",
+                            "SEIZURE_ITEMS": []
+                        }
+                    ]
+                }
+            ],
+            "DOBS": [
+                {
+                    "DOB_INTRNL_SEQ": 1,
+                    "UNF_PSNGR_ID": "2349202",
+                    "DOB_DT": "1963-05-23",
+                    "DOB_STR": "19630528"
+                }
+            ],
+            "PHONE_NUMBERS": [
+                {
+                    "PHNNBR_INTRL_SEQ": 1,
+                    "UNF_PSNGR_ID": "2349202",
+                    "PHN_NBR": "4432932929"
+                }
+            ],
+            "ADDRESSES": [
+                {
+                    "ADDR_INTRNL_SEQ": 1,
+                    "ADDR": "234 Main St",
+                    "ADDR_TYP": "H"
+                },
+                {
+                    "ADDR_INTRNL_SEQ": 2,
+                    "ADDR": "59553 Maizeland St",
+                    "ADDR_TYP": "H"
+                }
+            ],
+            "DEROG": []
+        },
+        "message": null
+    }
+}

@@ -1,0 +1,7 @@
+flask
+flask-cors
+neo4j
+graphdatascience
+requests
+gunicorn
+python-dotenv
