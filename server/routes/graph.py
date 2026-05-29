@@ -586,22 +586,28 @@ def search_graph():
     driver = get_driver()
     params = {'q': q}
 
+    params['q_lower'] = q.lower()
+
     if upid:
         params['upid'] = upid
         cypher = """
-            MATCH (n:MainPassenger {upid: $upid})
-            WHERE n.id CONTAINS $q
-               OR n.first_name CONTAINS $q
-               OR n.last_name CONTAINS $q
+            MATCH (n {upid: $upid})
+            WHERE (n:MainPassenger OR n:AssociatedPerson)
+              AND (n.id CONTAINS $q
+                OR toLower(n.first_name) CONTAINS $q_lower
+                OR toLower(n.last_name) CONTAINS $q_lower
+                OR n.unf_psngr_id CONTAINS $q)
             OPTIONAL MATCH (n)-[r]-(m {upid: $upid})
             RETURN n, r, m
         """
     else:
         cypher = """
-            MATCH (n:MainPassenger)
-            WHERE n.id CONTAINS $q
-               OR n.first_name CONTAINS $q
-               OR n.last_name CONTAINS $q
+            MATCH (n)
+            WHERE (n:MainPassenger OR n:AssociatedPerson)
+              AND (n.id CONTAINS $q
+                OR toLower(n.first_name) CONTAINS $q_lower
+                OR toLower(n.last_name) CONTAINS $q_lower
+                OR n.unf_psngr_id CONTAINS $q)
             OPTIONAL MATCH (n)-[r]-(m)
             RETURN n, r, m
         """
