@@ -4,18 +4,31 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+def graph_is_fresh(driver, upid: str, max_age_hours: int = 24) -> bool:
+    """Return True if a graph for this UPID exists and is less than max_age_hours old."""
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+
+    with driver.session() as session:
+        result = session.run("""
+            MATCH (mp:MainPassenger {upid: $upid})
+            WHERE mp.created_at > $cutoff
+            RETURN mp LIMIT 1
+        """, upid=upid, cutoff=cutoff)
+        return result.single() is not None
+
+
 def build_graph_for_pax(driver, pax_data: dict) -> None:
-    """Delete existing graph for this UPID, then rebuild from ES data."""
+    """Delete existing graph for this UPID, then rebuild from data."""
 
     upid = str(pax_data.get('UNF_PSNGR_ID'))
     logger.info(f"Building graph for UPID: {upid}")
 
     with driver.session() as session:
-        # Delete this UPID's nodes (new format with upid property)
+        # Delete this UPID's nodes
         session.run("MATCH (n {upid: $upid}) DETACH DELETE n", upid=upid).consume()
 
-        # Also delete old pre-UPID data: any MainPassenger with this id
-        # and all nodes connected to it (catches stale nodes without upid property)
+        # Also delete old pre-UPID data
         session.run("""
             MATCH (mp:MainPassenger {id: $upid})
             OPTIONAL MATCH (mp)-[*1..4]-(connected)
@@ -30,12 +43,10 @@ def build_graph_for_pax(driver, pax_data: dict) -> None:
         _build_main_passenger(session, pax_data, upid, now)
         _build_country(session, pax_data, upid, now)
         _build_birth_locations(session, pax_data, upid, now)
-        _build_document(session, pax_data, upid, now)
-        _build_aliases(session, pax_data, upid, now)
         _build_phones(session, pax_data, upid, now)
         _build_addresses(session, pax_data, upid, now)
-        _build_associated_persons(session, pax_data, upid, now)
-        _build_derogs(session, pax_data, upid, now)
+        _build_seacats(session, pax_data.get('SEACATS', []), upid, upid, 'MainPassenger', now)
+        _build_co_travelers(session, pax_data, upid, now)
 
         logger.info("Graph build complete")
 
@@ -100,29 +111,6 @@ def _build_birth_locations(session, data, upid, now):
              city=bl.get('BIRTH_CITY_NM', '')).consume()
 
 
-def _build_document(session, data, upid, now):
-    doc_nbr = data.get('RCNT_DOC_NBR')
-    if doc_nbr:
-        session.run("""
-            MATCH (mp:MainPassenger {id: $upid})
-            CREATE (d:Document {id_number: $id_number, doc_type: $doc_type, upid: $upid, created_at: $now, icon: '📄'})
-            CREATE (mp)-[:HAS_DOC]->(d)
-        """, upid=upid, now=now,
-             id_number=doc_nbr,
-             doc_type=data.get('RCNT_DOC_TYP_CD', '')).consume()
-
-
-def _build_aliases(session, data, upid, now):
-    for name in data.get('NAMES', []):
-        session.run("""
-            MATCH (mp:MainPassenger {id: $upid})
-            CREATE (n:Name {first_name: $first_name, last_name: $last_name, upid: $upid, created_at: $now, icon: '🏷️'})
-            CREATE (mp)-[:HAS_ALIAS]->(n)
-        """, upid=upid, now=now,
-             first_name=name.get('FRST_NM', ''),
-             last_name=name.get('LST_NM', '')).consume()
-
-
 def _build_phones(session, data, upid, now):
     for phone in data.get('PHONE_NUMBERS', []):
         session.run("""
@@ -143,10 +131,85 @@ def _build_addresses(session, data, upid, now):
              type=addr.get('ADDR_TYP', '')).consume()
 
 
-def _build_associated_persons(session, data, upid, now):
-    for rel in data.get('RELATIONSHIPS', []):
-        seq = rel.get('RLNTNSHP_INTRNL_SEQ', 0)
-        ap_id = f"{upid}_rel_{seq}"
+def _build_seacats(session, seacats, parent_id, upid, parent_label, now):
+    """Build Seacat nodes attached to a parent (MainPassenger or AssociatedPerson)."""
+    for i, sc in enumerate(seacats):
+        seacat_id = f"{parent_id}_seacat_{i}"
+        session.run(f"""
+            MATCH (p:{parent_label} {{id: $parent_id}})
+            CREATE (s:Seacat {{
+                id: $seacat_id,
+                enf_action_id: $enf_action_id,
+                incident_datetime: $incident_datetime,
+                incident_id: $incident_id,
+                incident_type: $incident_type,
+                upid: $upid,
+                created_at: $now,
+                icon: '\u26A0\uFE0F'
+            }})
+            CREATE (p)-[:HAS_SEACAT]->(s)
+        """, parent_id=parent_id, upid=upid, now=now,
+             seacat_id=seacat_id,
+             enf_action_id=sc.get('ENF_ACTN_ID', ''),
+             incident_datetime=sc.get('NCDNT_DTTM', ''),
+             incident_id=sc.get('NCDNT_ID', ''),
+             incident_type=sc.get('NCDNT_TYP', '')).consume()
+
+
+def _build_visa(session, visas, parent_id, upid, parent_label, now):
+    """Build Visa nodes attached to a parent (AssociatedPerson)."""
+    for i, v in enumerate(visas):
+        visa_id = f"{parent_id}_visa_{i}"
+        session.run(f"""
+            MATCH (p:{parent_label} {{id: $parent_id}})
+            CREATE (vi:Visa {{
+                id: $visa_id,
+                name: 'VISA',
+                type: $type,
+                refusal_code: $refusal_code,
+                refusal_datetime: $refusal_datetime,
+                upid: $upid,
+                created_at: $now,
+                icon: '📋'
+            }})
+            CREATE (p)-[:HAS_VISA]->(vi)
+        """, parent_id=parent_id, upid=upid, now=now,
+             visa_id=visa_id,
+             type=v.get('TYPE', ''),
+             refusal_code=v.get('RFSL_CD', ''),
+             refusal_datetime=v.get('RFSL_DTTM', '')).consume()
+
+
+def _build_secondary(session, secondaries, parent_id, upid, parent_label, now):
+    """Build Secondary nodes attached to a parent (AssociatedPerson)."""
+    for i, sec in enumerate(secondaries):
+        sec_id = f"{parent_id}_secondary_{i}"
+        session.run(f"""
+            MATCH (p:{parent_label} {{id: $parent_id}})
+            CREATE (s:Secondary {{
+                id: $sec_id,
+                name: 'SECONDARY',
+                sub_transaction_type: $sub_trn_type,
+                reason: $reason,
+                crossing_datetime: $crossing_datetime,
+                referral_workspace_id: $referral_id,
+                upid: $upid,
+                created_at: $now,
+                icon: '🔍'
+            }})
+            CREATE (p)-[:HAS_SECONDARY]->(s)
+        """, parent_id=parent_id, upid=upid, now=now,
+             sec_id=sec_id,
+             sub_trn_type=sec.get('SUB_TRN_TYP', ''),
+             reason=sec.get('RSN_TXT', ''),
+             crossing_datetime=sec.get('CRSG_DTTM', ''),
+             referral_id=str(sec.get('RFRL_WRKSPC_ID_NBR', ''))).consume()
+
+
+def _build_co_travelers(session, data, upid, now):
+    """Build AssociatedPerson nodes from UNF_PRSN_CO_TRAVELERS, with nested CO_TRAVELERS."""
+    for i, ct in enumerate(data.get('UNF_PRSN_CO_TRAVELERS', [])):
+        ap_id = f"{upid}_ct_{i}"
 
         # Create AssociatedPerson + relationship to MainPassenger
         session.run("""
@@ -155,78 +218,30 @@ def _build_associated_persons(session, data, upid, now):
                 id: $ap_id,
                 first_name: $first_name,
                 last_name: $last_name,
-                relationship_type: $rel_type,
+                dob: $dob,
                 upid: $upid,
                 created_at: $now,
                 icon: '👥'
             })
-            CREATE (mp)-[:ASSOCIATED_WITH]->(ap)
+            CREATE (mp)-[:CO_TRAVELER]->(ap)
         """, upid=upid, now=now,
              ap_id=ap_id,
-             first_name=rel.get('GV_NM', ''),
-             last_name=rel.get('LST_NM', ''),
-             rel_type=rel.get('RLTN_TYP', '')).consume()
+             first_name=ct.get('FRST_NM', ''),
+             last_name=ct.get('LST_NM', ''),
+             dob=ct.get('DOB_DT', '')).consume()
 
-        # Phone numbers for this associated person
-        for phn in rel.get('PHN_NBR', []):
-            session.run("""
-                MATCH (ap:AssociatedPerson {id: $ap_id})
-                CREATE (ph:Phone {number: $number, upid: $upid, created_at: $now, icon: '📱'})
-                CREATE (ap)-[:HAS_PHONE]->(ph)
-            """, ap_id=ap_id, number=phn, upid=upid, now=now).consume()
+        # Seacats for this co-traveler
+        _build_seacats(session, ct.get('SEACATS', []), ap_id, upid, 'AssociatedPerson', now)
 
-        # Derog records for this associated person
-        for derog in rel.get('DEROG', []):
-            d_seq = derog.get('DEROG_INTRNL_SEQ', 0)
-            derog_id = f"{ap_id}_derog_{d_seq}"
+        # Visa records for this co-traveler
+        _build_visa(session, ct.get('VISA', []), ap_id, upid, 'AssociatedPerson', now)
 
-            session.run("""
-                MATCH (ap:AssociatedPerson {id: $ap_id})
-                CREATE (d:Derog {
-                    id: $derog_id,
-                    seq: $seq,
-                    type: $type,
-                    source: $source,
-                    description: $description,
-                    date: $date,
-                    status: $status,
-                    seizure_ind: $seizure_ind,
-                    upid: $upid,
-                    created_at: $now,
-                    icon: '\u26A0\uFE0F'
-                })
-                CREATE (ap)-[:HAS_DEROG]->(d)
-            """, ap_id=ap_id, upid=upid, now=now,
-                 derog_id=derog_id,
-                 seq=d_seq,
-                 type=derog.get('DEROG_TYP_CD', ''),
-                 source=derog.get('DEROG_SRC_CD', ''),
-                 description=derog.get('DEROG_DESC', ''),
-                 date=derog.get('DEROG_DT', ''),
-                 status=derog.get('DEROG_STAT_CD', ''),
-                 seizure_ind=derog.get('SEIZURE_IND', '')).consume()
+        # Secondary records for this co-traveler
+        _build_secondary(session, ct.get('SECONDARY', []), ap_id, upid, 'AssociatedPerson', now)
 
-            for item in derog.get('SEIZURE_ITEMS', []):
-                session.run("""
-                    MATCH (d:Derog {id: $derog_id})
-                    CREATE (si:SeizureItem {
-                        name: $name,
-                        quantity: $quantity,
-                        date: $date,
-                        upid: $upid,
-                        created_at: $now,
-                        icon: '📦'
-                    })
-                    CREATE (d)-[:SEIZED_ITEM]->(si)
-                """, derog_id=derog_id, upid=upid, now=now,
-                     name=item.get('SEIZURE_ITEM_NM', ''),
-                     quantity=item.get('SEIZURE_QTY', ''),
-                     date=item.get('SEIZURE_DT', '')).consume()
-
-        # Nested AssociatedPersons (AP -> AP)
-        for sub_rel in rel.get('RELATIONSHIPS', []):
-            sub_seq = sub_rel.get('RLNTNSHP_INTRNL_SEQ', 0)
-            sub_ap_id = f"{ap_id}_rel_{sub_seq}"
+        # Nested co-travelers (CO_TRAVELERS within a co-traveler)
+        for j, sub_ct in enumerate(ct.get('CO_TRAVELERS', [])):
+            sub_ap_id = f"{ap_id}_ct_{j}"
 
             session.run("""
                 MATCH (parent_ap:AssociatedPerson {id: $ap_id})
@@ -234,121 +249,23 @@ def _build_associated_persons(session, data, upid, now):
                     id: $sub_ap_id,
                     first_name: $first_name,
                     last_name: $last_name,
-                    relationship_type: $rel_type,
+                    dob: $dob,
                     upid: $upid,
                     created_at: $now,
                     icon: '👥'
                 })
-                CREATE (parent_ap)-[:ASSOCIATED_WITH]->(ap)
+                CREATE (parent_ap)-[:CO_TRAVELER]->(ap)
             """, ap_id=ap_id, upid=upid, now=now,
                  sub_ap_id=sub_ap_id,
-                 first_name=sub_rel.get('GV_NM', ''),
-                 last_name=sub_rel.get('LST_NM', ''),
-                 rel_type=sub_rel.get('RLTN_TYP', '')).consume()
+                 first_name=sub_ct.get('FRST_NM', ''),
+                 last_name=sub_ct.get('LST_NM', ''),
+                 dob=sub_ct.get('DOB_DT', '')).consume()
 
-            # Phones for nested AP
-            for phn in sub_rel.get('PHN_NBR', []):
-                session.run("""
-                    MATCH (ap:AssociatedPerson {id: $sub_ap_id})
-                    CREATE (ph:Phone {number: $number, upid: $upid, created_at: $now, icon: '📱'})
-                    CREATE (ap)-[:HAS_PHONE]->(ph)
-                """, sub_ap_id=sub_ap_id, number=phn, upid=upid, now=now).consume()
+            # Seacats for nested co-traveler
+            _build_seacats(session, sub_ct.get('SEACATS', []), sub_ap_id, upid, 'AssociatedPerson', now)
 
-            # Derogs for nested AP
-            for sub_derog in sub_rel.get('DEROG', []):
-                sd_seq = sub_derog.get('DEROG_INTRNL_SEQ', 0)
-                sub_derog_id = f"{sub_ap_id}_derog_{sd_seq}"
+            # Visa for nested co-traveler
+            _build_visa(session, sub_ct.get('VISA', []), sub_ap_id, upid, 'AssociatedPerson', now)
 
-                session.run("""
-                    MATCH (ap:AssociatedPerson {id: $sub_ap_id})
-                    CREATE (d:Derog {
-                        id: $derog_id,
-                        seq: $seq,
-                        type: $type,
-                        source: $source,
-                        description: $description,
-                        date: $date,
-                        status: $status,
-                        seizure_ind: $seizure_ind,
-                        upid: $upid,
-                        created_at: $now,
-                        icon: '\u26A0\uFE0F'
-                    })
-                    CREATE (ap)-[:HAS_DEROG]->(d)
-                """, sub_ap_id=sub_ap_id, upid=upid, now=now,
-                     derog_id=sub_derog_id,
-                     seq=sd_seq,
-                     type=sub_derog.get('DEROG_TYP_CD', ''),
-                     source=sub_derog.get('DEROG_SRC_CD', ''),
-                     description=sub_derog.get('DEROG_DESC', ''),
-                     date=sub_derog.get('DEROG_DT', ''),
-                     status=sub_derog.get('DEROG_STAT_CD', ''),
-                     seizure_ind=sub_derog.get('SEIZURE_IND', '')).consume()
-
-                for item in sub_derog.get('SEIZURE_ITEMS', []):
-                    session.run("""
-                        MATCH (d:Derog {id: $derog_id})
-                        CREATE (si:SeizureItem {
-                            name: $name,
-                            quantity: $quantity,
-                            date: $date,
-                            upid: $upid,
-                            created_at: $now,
-                            icon: '📦'
-                        })
-                        CREATE (d)-[:SEIZED_ITEM]->(si)
-                    """, derog_id=sub_derog_id, upid=upid, now=now,
-                         name=item.get('SEIZURE_ITEM_NM', ''),
-                         quantity=item.get('SEIZURE_QTY', ''),
-                         date=item.get('SEIZURE_DT', '')).consume()
-
-
-def _build_derogs(session, data, upid, now):
-    for derog in data.get('DEROG', []):
-        seq = derog.get('DEROG_INTRNL_SEQ', 0)
-        derog_id = f"{upid}_derog_{seq}"
-
-        # Create Derog + relationship to MainPassenger
-        session.run("""
-            MATCH (mp:MainPassenger {id: $upid})
-            CREATE (d:Derog {
-                id: $derog_id,
-                seq: $seq,
-                type: $type,
-                source: $source,
-                description: $description,
-                date: $date,
-                status: $status,
-                seizure_ind: $seizure_ind,
-                upid: $upid,
-                created_at: $now,
-                icon: '\u26A0\uFE0F'
-            })
-            CREATE (mp)-[:HAS_DEROG]->(d)
-        """, upid=upid, now=now,
-             derog_id=derog_id,
-             seq=seq,
-             type=derog.get('DEROG_TYP_CD', ''),
-             source=derog.get('DEROG_SRC_CD', ''),
-             description=derog.get('DEROG_DESC', ''),
-             date=derog.get('DEROG_DT', ''),
-             status=derog.get('DEROG_STAT_CD', ''),
-             seizure_ind=derog.get('SEIZURE_IND', '')).consume()
-
-        # Seizure items for this derog
-        for item in derog.get('SEIZURE_ITEMS', []):
-            session.run("""
-                MATCH (d:Derog {id: $derog_id})
-                CREATE (si:SeizureItem {
-                    name: $name,
-                    quantity: $quantity,
-                    date: $date,
-                    upid: $upid,
-                    created_at: $now,
-                    icon: '📦'
-                })
-                CREATE (d)-[:SEIZED_ITEM]->(si)
-            """, derog_id=derog_id, upid=upid, now=now,
-                 name=item.get('SEIZURE_ITEM_NM', ''),
-                 quantity=item.get('SEIZURE_QTY', ''),
-                 date=item.get('SEIZURE_DT', '')).consume()
+            # Secondary for nested co-traveler
+            _build_secondary(session, sub_ct.get('SECONDARY', []), sub_ap_id, upid, 'AssociatedPerson', now)

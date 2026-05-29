@@ -3,8 +3,8 @@ import { NODE_COLORS } from '../constants';
 const NODE_TYPES = Object.keys(NODE_COLORS);
 
 const REL_TYPES = [
-  'FROM_COUNTRY', 'BORN_IN', 'HAS_ALIAS', 'HAS_PHONE', 'HAS_DOC',
-  'HAS_ADDRESS', 'ASSOCIATED_WITH', 'HAS_DEROG', 'SEIZED_ITEM',
+  'FROM_COUNTRY', 'BORN_IN', 'HAS_PHONE',
+  'HAS_ADDRESS', 'CO_TRAVELER', 'HAS_SEACAT', 'HAS_VISA', 'HAS_SECONDARY',
 ];
 
 export default function FilterPanel({ filters, onFilterChange }) {

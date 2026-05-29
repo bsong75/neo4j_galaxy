@@ -7,15 +7,18 @@ graph_bp = Blueprint('graph', __name__)
 
 NODE_COLORS = {
     'MainPassenger': '#4CAF50',
-    'Name': '#FF9800',
     'Phone': '#2196F3',
-    'Document': '#795548',
     'Country': '#00BCD4',
     'BirthLocation': '#F44336',
     'Address': '#9C27B0',
     'AssociatedPerson': '#8BC34A',
-    'Derog': '#E91E63',
-    'SeizureItem': '#607D8B',
+    'Seacat': '#E91E63',
+    'Visa': '#FF9800',
+    'Secondary': '#607D8B',
+}
+
+NODE_SIZES = {
+    'MainPassenger': 12,
 }
 
 
@@ -37,6 +40,7 @@ def node_to_dict(node):
         'label': label,
         'properties': props,
         'color': NODE_COLORS.get(label, '#999999'),
+        'val': NODE_SIZES.get(label, 6),
     }
 
 
@@ -72,7 +76,28 @@ def _get_upid():
 
 @graph_bp.route('/graph/full')
 def get_full_graph():
-    """Get the full graph for a given UPID."""
+    """Get the full graph for a given UPID.
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: upid
+        in: query
+        type: string
+        required: true
+        description: Unified Passenger ID
+        example: "2349202"
+      - name: limit
+        in: query
+        type: integer
+        required: false
+        description: Max number of results
+    responses:
+      200:
+        description: Graph data with nodes and links
+      400:
+        description: Missing upid parameter
+    """
     upid = _get_upid()
     if not upid:
         return jsonify({'error': 'upid parameter is required'}), 400
@@ -98,7 +123,23 @@ def get_full_graph():
 
 @graph_bp.route('/graph/core')
 def get_core_graph():
-    """Get MainPassenger, AssociatedPerson, and their Derog nodes for a UPID."""
+    """Get MainPassenger, AssociatedPerson, Seacat, Visa, and Secondary nodes for a UPID.
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: upid
+        in: query
+        type: string
+        required: true
+        description: Unified Passenger ID
+        example: "2349202"
+    responses:
+      200:
+        description: Core graph data (passengers, co-travelers, seacats, visa, secondary)
+      400:
+        description: Missing upid parameter
+    """
     upid = _get_upid()
     if not upid:
         return jsonify({'error': 'upid parameter is required'}), 400
@@ -109,30 +150,269 @@ def get_core_graph():
     links = []
 
     with driver.session() as session:
-        # MainPassenger + AssociatedPerson relationships
+        # MainPassenger + co-traveler relationships
         d1 = run_and_collect(session, """
             MATCH (mp:MainPassenger {upid: $upid})
-            OPTIONAL MATCH (mp)-[r:ASSOCIATED_WITH]->(ap:AssociatedPerson {upid: $upid})
+            OPTIONAL MATCH (mp)-[r:CO_TRAVELER]->(ap:AssociatedPerson {upid: $upid})
             RETURN mp AS n, r, ap AS m
         """, upid=upid)
-        # MainPassenger derogs
+        # MainPassenger seacats
         d2 = run_and_collect(session, """
-            MATCH (mp:MainPassenger {upid: $upid})-[r:HAS_DEROG]->(d:Derog {upid: $upid})
-            RETURN mp AS n, r, d AS m
+            MATCH (mp:MainPassenger {upid: $upid})-[r:HAS_SEACAT]->(s:Seacat {upid: $upid})
+            RETURN mp AS n, r, s AS m
         """, upid=upid)
-        # AssociatedPerson derogs
+        # AssociatedPerson seacats
         d3 = run_and_collect(session, """
-            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_DEROG]->(d:Derog {upid: $upid})
-            RETURN ap AS n, r, d AS m
+            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_SEACAT]->(s:Seacat {upid: $upid})
+            RETURN ap AS n, r, s AS m
         """, upid=upid)
-        # AssociatedPerson -> AssociatedPerson relationships
+        # AssociatedPerson -> AssociatedPerson (nested co-travelers)
         d4 = run_and_collect(session, """
-            MATCH (ap1:AssociatedPerson {upid: $upid})-[r:ASSOCIATED_WITH]->(ap2:AssociatedPerson {upid: $upid})
+            MATCH (ap1:AssociatedPerson {upid: $upid})-[r:CO_TRAVELER]->(ap2:AssociatedPerson {upid: $upid})
             RETURN ap1 AS n, r, ap2 AS m
+        """, upid=upid)
+        # AssociatedPerson visa records
+        d5 = run_and_collect(session, """
+            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_VISA]->(v:Visa {upid: $upid})
+            RETURN ap AS n, r, v AS m
+        """, upid=upid)
+        # AssociatedPerson secondary records
+        d6 = run_and_collect(session, """
+            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_SECONDARY]->(s:Secondary {upid: $upid})
+            RETURN ap AS n, r, s AS m
         """, upid=upid)
 
     # Merge all results
-    for dataset in [d1, d2, d3, d4]:
+    for dataset in [d1, d2, d3, d4, d5, d6]:
+        for node in dataset['nodes']:
+            nodes_map[node['id']] = node
+        links.extend(dataset['links'])
+
+    # Deduplicate links
+    seen = set()
+    unique_links = []
+    for link in links:
+        key = f"{link['source']}-{link['type']}-{link['target']}"
+        if key not in seen:
+            seen.add(key)
+            unique_links.append(link)
+
+    return jsonify({'nodes': list(nodes_map.values()), 'links': unique_links})
+
+
+@graph_bp.route('/graph/flagged')
+def get_flagged_graph():
+    """Level 1: MainPassenger + only co-travelers with SEACAT/VISA/SECONDARY flags
+    (or bridge co-travelers whose nested co-travelers have flags).
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: upid
+        in: query
+        type: string
+        required: true
+        description: Unified Passenger ID
+    responses:
+      200:
+        description: Flagged network graph
+      400:
+        description: Missing upid parameter
+    """
+    upid = _get_upid()
+    if not upid:
+        return jsonify({'error': 'upid parameter is required'}), 400
+
+    driver = get_driver()
+
+    nodes_map = {}
+    links = []
+
+    with driver.session() as session:
+        # MainPassenger (always shown)
+        d_mp = run_and_collect(session, """
+            MATCH (mp:MainPassenger {upid: $upid})
+            RETURN mp AS n, null AS r, null AS m
+        """, upid=upid)
+
+        # MainPassenger seacats
+        d_mp_sc = run_and_collect(session, """
+            MATCH (mp:MainPassenger {upid: $upid})-[r:HAS_SEACAT]->(s:Seacat {upid: $upid})
+            RETURN mp AS n, r, s AS m
+        """, upid=upid)
+
+        # Direct co-travelers who have flags themselves
+        d_flagged = run_and_collect(session, """
+            MATCH (mp:MainPassenger {upid: $upid})-[r:CO_TRAVELER]->(ap:AssociatedPerson {upid: $upid})
+            WHERE EXISTS { (ap)-[:HAS_SEACAT]->() }
+               OR EXISTS { (ap)-[:HAS_VISA]->() }
+               OR EXISTS { (ap)-[:HAS_SECONDARY]->() }
+            RETURN mp AS n, r, ap AS m
+        """, upid=upid)
+
+        # Direct co-travelers who are "bridges" — they don't have flags but their
+        # nested co-travelers do
+        d_bridge = run_and_collect(session, """
+            MATCH (mp:MainPassenger {upid: $upid})-[r:CO_TRAVELER]->(ap:AssociatedPerson {upid: $upid})
+            WHERE NOT EXISTS { (ap)-[:HAS_SEACAT]->() }
+              AND NOT EXISTS { (ap)-[:HAS_VISA]->() }
+              AND NOT EXISTS { (ap)-[:HAS_SECONDARY]->() }
+              AND EXISTS {
+                (ap)-[:CO_TRAVELER]->(:AssociatedPerson)
+                WHERE EXISTS { (ap)-[:CO_TRAVELER]->(:AssociatedPerson)-[:HAS_SEACAT]->() }
+                   OR EXISTS { (ap)-[:CO_TRAVELER]->(:AssociatedPerson)-[:HAS_VISA]->() }
+                   OR EXISTS { (ap)-[:CO_TRAVELER]->(:AssociatedPerson)-[:HAS_SECONDARY]->() }
+              }
+            RETURN mp AS n, r, ap AS m
+        """, upid=upid)
+
+        # Nested co-travelers who have flags (and their parent link)
+        d_nested_flagged = run_and_collect(session, """
+            MATCH (ap1:AssociatedPerson {upid: $upid})-[r:CO_TRAVELER]->(ap2:AssociatedPerson {upid: $upid})
+            WHERE EXISTS { (ap2)-[:HAS_SEACAT]->() }
+               OR EXISTS { (ap2)-[:HAS_VISA]->() }
+               OR EXISTS { (ap2)-[:HAS_SECONDARY]->() }
+            RETURN ap1 AS n, r, ap2 AS m
+        """, upid=upid)
+
+        # Flag nodes (SEACAT/VISA/SECONDARY) for all shown AssociatedPersons
+        d_sc = run_and_collect(session, """
+            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_SEACAT]->(s:Seacat {upid: $upid})
+            RETURN ap AS n, r, s AS m
+        """, upid=upid)
+        d_vi = run_and_collect(session, """
+            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_VISA]->(v:Visa {upid: $upid})
+            RETURN ap AS n, r, v AS m
+        """, upid=upid)
+        d_sec = run_and_collect(session, """
+            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_SECONDARY]->(s:Secondary {upid: $upid})
+            RETURN ap AS n, r, s AS m
+        """, upid=upid)
+
+    # Collect all flagged/bridge person IDs to filter flag nodes
+    all_datasets = [d_mp, d_mp_sc, d_flagged, d_bridge, d_nested_flagged, d_sc, d_vi, d_sec]
+
+    # First pass: collect shown person element IDs
+    shown_person_ids = set()
+    for dataset in [d_mp, d_flagged, d_bridge, d_nested_flagged]:
+        for node in dataset['nodes']:
+            if node['label'] in ('MainPassenger', 'AssociatedPerson'):
+                shown_person_ids.add(node['id'])
+
+    # Second pass: merge nodes/links, only include flag nodes connected to shown persons
+    for dataset in all_datasets:
+        for node in dataset['nodes']:
+            if node['label'] in ('MainPassenger', 'AssociatedPerson'):
+                if node['id'] in shown_person_ids:
+                    nodes_map[node['id']] = node
+            elif node['label'] in ('Seacat', 'Visa', 'Secondary'):
+                nodes_map[node['id']] = node
+            else:
+                nodes_map[node['id']] = node
+        for link in dataset['links']:
+            links.append(link)
+
+    # Filter: only keep links where both source and target are in nodes_map
+    # and only keep flag nodes connected to shown persons
+    final_nodes = {}
+    valid_links = []
+    for link in links:
+        src = link['source']
+        tgt = link['target']
+        if src in nodes_map and tgt in nodes_map:
+            # For flag links, ensure the person end is a shown person
+            if link['type'] in ('HAS_SEACAT', 'HAS_VISA', 'HAS_SECONDARY'):
+                if src in shown_person_ids:
+                    valid_links.append(link)
+                    final_nodes[src] = nodes_map[src]
+                    final_nodes[tgt] = nodes_map[tgt]
+            elif link['type'] == 'CO_TRAVELER':
+                if src in shown_person_ids and tgt in shown_person_ids:
+                    valid_links.append(link)
+                    final_nodes[src] = nodes_map[src]
+                    final_nodes[tgt] = nodes_map[tgt]
+            else:
+                valid_links.append(link)
+                final_nodes[src] = nodes_map[src]
+                final_nodes[tgt] = nodes_map[tgt]
+
+    # Always include MainPassenger even if no links
+    for node in d_mp['nodes']:
+        final_nodes[node['id']] = node
+
+    # Deduplicate links
+    seen = set()
+    unique_links = []
+    for link in valid_links:
+        key = f"{link['source']}-{link['type']}-{link['target']}"
+        if key not in seen:
+            seen.add(key)
+            unique_links.append(link)
+
+    return jsonify({'nodes': list(final_nodes.values()), 'links': unique_links})
+
+
+@graph_bp.route('/graph/people')
+def get_people_graph():
+    """Level 2: All people + their SEACAT/VISA/SECONDARY flags (no phones, addresses, etc.).
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: upid
+        in: query
+        type: string
+        required: true
+        description: Unified Passenger ID
+    responses:
+      200:
+        description: All people graph with flags
+      400:
+        description: Missing upid parameter
+    """
+    upid = _get_upid()
+    if not upid:
+        return jsonify({'error': 'upid parameter is required'}), 400
+
+    driver = get_driver()
+
+    nodes_map = {}
+    links = []
+
+    with driver.session() as session:
+        # MainPassenger + direct co-travelers
+        d1 = run_and_collect(session, """
+            MATCH (mp:MainPassenger {upid: $upid})
+            OPTIONAL MATCH (mp)-[r:CO_TRAVELER]->(ap:AssociatedPerson {upid: $upid})
+            RETURN mp AS n, r, ap AS m
+        """, upid=upid)
+        # Nested co-travelers (AP -> AP)
+        d2 = run_and_collect(session, """
+            MATCH (ap1:AssociatedPerson {upid: $upid})-[r:CO_TRAVELER]->(ap2:AssociatedPerson {upid: $upid})
+            RETURN ap1 AS n, r, ap2 AS m
+        """, upid=upid)
+        # MainPassenger seacats
+        d3 = run_and_collect(session, """
+            MATCH (mp:MainPassenger {upid: $upid})-[r:HAS_SEACAT]->(s:Seacat {upid: $upid})
+            RETURN mp AS n, r, s AS m
+        """, upid=upid)
+        # AssociatedPerson seacats
+        d4 = run_and_collect(session, """
+            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_SEACAT]->(s:Seacat {upid: $upid})
+            RETURN ap AS n, r, s AS m
+        """, upid=upid)
+        # AssociatedPerson visa records
+        d5 = run_and_collect(session, """
+            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_VISA]->(v:Visa {upid: $upid})
+            RETURN ap AS n, r, v AS m
+        """, upid=upid)
+        # AssociatedPerson secondary records
+        d6 = run_and_collect(session, """
+            MATCH (ap:AssociatedPerson {upid: $upid})-[r:HAS_SECONDARY]->(s:Secondary {upid: $upid})
+            RETURN ap AS n, r, s AS m
+        """, upid=upid)
+
+    for dataset in [d1, d2, d3, d4, d5, d6]:
         for node in dataset['nodes']:
             nodes_map[node['id']] = node
         links.extend(dataset['links'])
@@ -151,7 +431,23 @@ def get_core_graph():
 
 @graph_bp.route('/graph/details')
 def get_detail_graph():
-    """Get the full graph for a UPID (for expanding from the core view)."""
+    """Get the full graph for a UPID (for expanding from the core view).
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: upid
+        in: query
+        type: string
+        required: true
+        description: Unified Passenger ID
+        example: "2349202"
+    responses:
+      200:
+        description: Full detail graph data
+      400:
+        description: Missing upid parameter
+    """
     upid = _get_upid()
     if not upid:
         return jsonify({'error': 'upid parameter is required'}), 400
@@ -170,7 +466,26 @@ def get_detail_graph():
 
 @graph_bp.route('/graph/person/<person_id>')
 def get_person(person_id):
-    """Get a MainPassenger and their 1-hop neighbors."""
+    """Get a MainPassenger and their 1-hop neighbors.
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: person_id
+        in: path
+        type: string
+        required: true
+        description: MainPassenger ID
+        example: "2349202"
+      - name: upid
+        in: query
+        type: string
+        required: false
+        description: Scope results to a specific UPID
+    responses:
+      200:
+        description: Person node and connected neighbors
+    """
     upid = _get_upid()
     driver = get_driver()
 
@@ -197,7 +512,25 @@ def get_person(person_id):
 
 @graph_bp.route('/graph/expand/<path:element_id>')
 def expand_node(element_id):
-    """Expand a node's neighbors by element ID."""
+    """Expand a node's neighbors by element ID.
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: element_id
+        in: path
+        type: string
+        required: true
+        description: Neo4j element ID of the node to expand
+      - name: upid
+        in: query
+        type: string
+        required: false
+        description: Scope results to a specific UPID
+    responses:
+      200:
+        description: Expanded node with its neighbors
+    """
     upid = _get_upid()
     driver = get_driver()
 
@@ -224,7 +557,26 @@ def expand_node(element_id):
 
 @graph_bp.route('/graph/search')
 def search_graph():
-    """Search for MainPassenger by id or name within a UPID."""
+    """Search for MainPassenger by id or name within a UPID.
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: q
+        in: query
+        type: string
+        required: true
+        description: Search query (matches ID, first name, or last name)
+        example: "SMITH"
+      - name: upid
+        in: query
+        type: string
+        required: false
+        description: Scope search to a specific UPID
+    responses:
+      200:
+        description: Matching passengers and their connections
+    """
     q = request.args.get('q', '')
     upid = _get_upid()
 
@@ -262,7 +614,38 @@ def search_graph():
 
 @graph_bp.route('/graph/filter')
 def filter_graph():
-    """Filter graph by node types, relationship types for a UPID."""
+    """Filter graph by node types, relationship types for a UPID.
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: upid
+        in: query
+        type: string
+        required: true
+        description: Unified Passenger ID
+        example: "2349202"
+      - name: nodeTypes
+        in: query
+        type: string
+        required: false
+        description: Comma-separated node labels to include (e.g. "MainPassenger,Seacat")
+      - name: relTypes
+        in: query
+        type: string
+        required: false
+        description: Comma-separated relationship types to include (e.g. "HAS_SEACAT,CO_TRAVELER")
+      - name: limit
+        in: query
+        type: integer
+        required: false
+        description: Max number of results
+    responses:
+      200:
+        description: Filtered graph data
+      400:
+        description: Missing upid parameter
+    """
     upid = _get_upid()
     if not upid:
         return jsonify({'error': 'upid parameter is required'}), 400
@@ -305,7 +688,29 @@ def filter_graph():
 
 @graph_bp.route('/graph/cypher', methods=['POST'])
 def run_cypher():
-    """Execute a raw Cypher query and return graph results."""
+    """Execute a read-only Cypher query and return graph results.
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - cypher
+          properties:
+            cypher:
+              type: string
+              description: Cypher query to execute (read-only)
+              example: "MATCH (n:MainPassenger)-[r]->(m) RETURN n, r, m LIMIT 10"
+    responses:
+      200:
+        description: Graph data from the query
+      400:
+        description: Missing cypher or destructive operation blocked
+    """
     data = request.get_json()
     cypher = data.get('cypher', '')
 
@@ -328,7 +733,26 @@ def run_cypher():
 
 @graph_bp.route('/graph/summarize', methods=['POST'])
 def summarize_graph():
-    """Use Groq to generate a natural language summary of the graph data."""
+    """Generate an AI summary of the graph data.
+    ---
+    tags:
+      - Graph
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            nodes:
+              type: array
+              description: List of graph nodes to summarize
+              items:
+                type: object
+    responses:
+      200:
+        description: AI-generated summary of the graph
+    """
     data = request.get_json()
     nodes = data.get('nodes', [])
 
@@ -350,12 +774,13 @@ def summarize_graph():
 
 Format your response as follows:
 1. One opening sentence with the main passenger's name and key identifiers.
-2. A bullet point list for derogatory records (derogs), one bullet per derog:
-   - Include who has the derog (name), the type, source, and description
-   - Include seizure items if any (name, quantity)
-3. One closing sentence summarizing associated persons count and relationship types.
+2. A bullet point list for SEACAT records (enforcement actions/incidents), one bullet per record:
+   - Include who has the record (name), the incident type and ID
+3. A bullet point list for VISA records (refusals), if any.
+4. A bullet point list for SECONDARY inspection records, if any.
+5. One closing sentence summarizing co-travelers count.
 
-Use bullet points (•) for the derog list. Be concise and factual. Do NOT mention graph databases, nodes, or technical terms — write as if briefing an analyst."""
+Use bullet points (•) for each list. Be concise and factual. Do NOT mention graph databases, nodes, or technical terms — write as if briefing an analyst."""
 
     try:
         resp = http_requests.post(
@@ -383,7 +808,14 @@ Use bullet points (•) for the derog list. Be concise and factual. Do NOT menti
 
 @graph_bp.route('/graph/schema')
 def get_schema():
-    """Return available node labels and relationship types."""
+    """Return available node labels and relationship types.
+    ---
+    tags:
+      - Graph
+    responses:
+      200:
+        description: Node labels, relationship types, and color mapping
+    """
     driver = get_driver()
 
     with driver.session() as session:

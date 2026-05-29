@@ -1,7 +1,9 @@
 flask
 flask-cors
+flasgger
 neo4j
 graphdatascience
 requests
 gunicorn
 python-dotenv
+elasticsearch>=8.0.0,<9.0.0

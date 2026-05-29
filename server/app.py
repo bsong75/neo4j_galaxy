@@ -6,6 +6,7 @@ from flask import Flask
 
 load_dotenv()
 from flask_cors import CORS
+from flasgger import Swagger
 from routes.graph import graph_bp
 from routes.chat import chat_bp
 from routes.upax import upax_bp
@@ -15,6 +16,14 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, origins='*')
+
+app.config['SWAGGER'] = {
+    'title': 'Neo4j Galaxy API',
+    'version': '1.0',
+    'description': 'Graph-based passenger network explorer API',
+    'uiversion': 3,
+}
+Swagger(app)
 
 app.register_blueprint(graph_bp, url_prefix='/api')
 app.register_blueprint(chat_bp, url_prefix='/api')

@@ -6,7 +6,7 @@ import api from '../api';
 
 export default function Sidebar({ upid, replaceGraphData, mergeGraphData, filters, onFilterChange, onSummary, graphSummary, style }) {
   const [limit, setLimit] = useState(500);
-  const [detailsLoaded, setDetailsLoaded] = useState(false);
+  const [currentLevel, setCurrentLevel] = useState(null);
   const [hasSummary, setHasSummary] = useState(false);
   const [summaryVisible, setSummaryVisible] = useState(false);
   const autoLoaded = useRef(false);
@@ -44,34 +44,37 @@ export default function Sidebar({ upid, replaceGraphData, mergeGraphData, filter
     }
   };
 
-  const handleLoadGraph = async () => {
+  // Level 1: Flagged network only
+  const handleLoadFlagged = async () => {
     try {
-      const res = await api.get(`/graph/core?${upidParam}`);
+      const res = await api.get(`/graph/flagged?${upidParam}`);
       replaceGraphData(res.data);
-      setDetailsLoaded(false);
+      setCurrentLevel(1);
       fetchSummary(res.data);
     } catch (err) {
-      console.error('Load error:', err);
+      console.error('Load flagged error:', err);
     }
   };
 
-  const handleShowDetails = async () => {
+  // Level 2: All people
+  const handleLoadPeople = async () => {
+    try {
+      const res = await api.get(`/graph/people?${upidParam}`);
+      replaceGraphData(res.data);
+      setCurrentLevel(2);
+    } catch (err) {
+      console.error('Load people error:', err);
+    }
+  };
+
+  // Level 3: Show all details
+  const handleShowAll = async () => {
     try {
       const res = await api.get(`/graph/details?${upidParam}`);
-      mergeGraphData(res.data);
-      setDetailsLoaded(true);
+      replaceGraphData(res.data);
+      setCurrentLevel(3);
     } catch (err) {
       console.error('Details error:', err);
-    }
-  };
-
-  const handleHideDetails = async () => {
-    try {
-      const res = await api.get(`/graph/core?${upidParam}`);
-      replaceGraphData(res.data);
-      setDetailsLoaded(false);
-    } catch (err) {
-      console.error('Load error:', err);
     }
   };
 
@@ -92,13 +95,26 @@ export default function Sidebar({ upid, replaceGraphData, mergeGraphData, filter
     }
   };
 
-  // Auto-load core graph when UPID is in the URL
+  // Auto-load Level 1 (flagged network) when UPID is in the URL
   useEffect(() => {
     if (upid && !autoLoaded.current) {
       autoLoaded.current = true;
-      handleLoadGraph();
+      handleLoadFlagged();
     }
   }, [upid]);
+
+  const buttonStyle = (level) => ({
+    width: '100%',
+    padding: '8px',
+    background: currentLevel === level ? '#4CAF50' : '#455A64',
+    border: currentLevel === level ? '2px solid #fff' : '2px solid transparent',
+    borderRadius: '4px',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '13px',
+    marginBottom: '6px',
+    fontWeight: currentLevel === level ? 'bold' : 'normal',
+  });
 
   return (
     <div style={{
@@ -115,21 +131,16 @@ export default function Sidebar({ upid, replaceGraphData, mergeGraphData, filter
         Graph Explorer
       </h2>
 
-      <button
-        onClick={handleLoadGraph}
-        style={{
-          width: '100%',
-          padding: '8px',
-          background: '#607D8B',
-          border: 'none',
-          borderRadius: '4px',
-          color: '#fff',
-          cursor: 'pointer',
-          fontSize: '13px',
-          marginBottom: '8px',
-        }}
-      >
-        Load PAX Network
+      <button onClick={handleLoadFlagged} style={buttonStyle(1)}>
+        Load PAX Network (Level I)
+      </button>
+
+      <button onClick={handleLoadPeople} style={buttonStyle(2)}>
+        Load All People (Level II)
+      </button>
+
+      <button onClick={handleShowAll} style={buttonStyle(3)}>
+        Show All Details (Level III)
       </button>
 
       {hasSummary && (
@@ -144,6 +155,7 @@ export default function Sidebar({ upid, replaceGraphData, mergeGraphData, filter
             color: '#fff',
             cursor: 'pointer',
             fontSize: '13px',
+            marginTop: '4px',
             marginBottom: '8px',
           }}
         >
@@ -151,26 +163,11 @@ export default function Sidebar({ upid, replaceGraphData, mergeGraphData, filter
         </button>
       )}
 
-      <button
-        onClick={detailsLoaded ? handleHideDetails : handleShowDetails}
-        style={{
-          width: '100%',
-          padding: '8px',
-          background: detailsLoaded ? '#E91E63' : '#4CAF50',
-          border: 'none',
-          borderRadius: '4px',
-          color: '#fff',
-          cursor: 'pointer',
-          fontSize: '13px',
-          marginBottom: '16px',
-        }}
-      >
-        {detailsLoaded ? 'Hide Details' : 'Show All Details'}
-      </button>
+      <div style={{ marginTop: '10px' }}>
+        <SearchBar upid={upid} replaceGraphData={replaceGraphData} />
+      </div>
 
-      <SearchBar upid={upid} replaceGraphData={replaceGraphData} />
-
-      {detailsLoaded && (
+      {currentLevel === 3 && (
         <>
           <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0 16px' }} />
 

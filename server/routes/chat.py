@@ -32,23 +32,26 @@ Examples:
 User: "Who is the main passenger?"
 MATCH (n:MainPassenger) RETURN n, null AS r, null AS m LIMIT 100
 
-User: "Show me all associated persons"
-MATCH (n:MainPassenger)-[r:ASSOCIATED_WITH]->(m:AssociatedPerson) RETURN n, r, m LIMIT 100
+User: "Show me all co-travelers"
+MATCH (n:MainPassenger)-[r:CO_TRAVELER]->(m:AssociatedPerson) RETURN n, r, m LIMIT 100
 
 User: "What derogs does the main passenger have?"
-MATCH (n:MainPassenger)-[r:HAS_DEROG]->(m:Derog) RETURN n, r, m LIMIT 100
+MATCH (n:MainPassenger)-[r:HAS_SEACAT]->(m:Seacat) RETURN n, r, m LIMIT 100
 
-User: "Show derogs for associated persons"
-MATCH (n:AssociatedPerson)-[r:HAS_DEROG]->(m:Derog) RETURN n, r, m LIMIT 100
+User: "Show all derogs for associated persons"
+MATCH (n:AssociatedPerson)-[r:HAS_SEACAT|HAS_VISA|HAS_SECONDARY]->(m) RETURN n, r, m LIMIT 100
 
 User: "How many derogs does uncle bob have?"
-MATCH (n:AssociatedPerson)-[r:HAS_DEROG]->(m:Derog) WHERE toLower(n.first_name) CONTAINS 'uncle' OR toLower(n.first_name) CONTAINS 'bob' OR toLower(n.last_name) CONTAINS 'uncle' OR toLower(n.last_name) CONTAINS 'bob' RETURN n, r, m LIMIT 100
+MATCH (n:AssociatedPerson) WHERE toLower(n.first_name) CONTAINS 'uncle' OR toLower(n.first_name) CONTAINS 'bob' OR toLower(n.last_name) CONTAINS 'uncle' OR toLower(n.last_name) CONTAINS 'bob' MATCH (n)-[r:HAS_SEACAT|HAS_VISA|HAS_SECONDARY]->(m) RETURN n, r, m LIMIT 100
 
 User: "Show me info about daddy john"
 MATCH (n:AssociatedPerson) WHERE toLower(n.first_name) CONTAINS 'daddy' OR toLower(n.first_name) CONTAINS 'john' OR toLower(n.last_name) CONTAINS 'daddy' OR toLower(n.last_name) CONTAINS 'john' RETURN n, null AS r, null AS m LIMIT 100
 
-User: "What seizure items exist?"
-MATCH (n:Derog)-[r:SEIZED_ITEM]->(m:SeizureItem) RETURN n, r, m LIMIT 100
+User: "Show visa refusals"
+MATCH (n:AssociatedPerson)-[r:HAS_VISA]->(m:Visa) RETURN n, r, m LIMIT 100
+
+User: "Show secondary inspections"
+MATCH (n:AssociatedPerson)-[r:HAS_SECONDARY]->(m:Secondary) RETURN n, r, m LIMIT 100
 
 User: "Show me the full graph"
 MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100
@@ -120,7 +123,33 @@ def extract_cypher(text):
 
 @chat_bp.route('/chat', methods=['POST'])
 def chat():
-    """Process a natural language query via Ollama and return graph results."""
+    """Send a natural language question and get graph results back.
+    ---
+    tags:
+      - Chat
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              type: string
+              description: Natural language question about the graph
+              example: "Who is the main passenger?"
+    responses:
+      200:
+        description: Cypher query, graph data, and natural language answer
+      400:
+        description: No message provided
+      500:
+        description: LLM API key not configured
+      502:
+        description: LLM API error
+    """
     data = request.get_json()
     message = data.get('message', '')
 
@@ -158,7 +187,7 @@ def chat():
         return jsonify({
             'cypher': '',
             'data': {'nodes': [], 'links': []},
-            'answer': 'Ask me a question about the graph! For example: "Who is the main passenger?" or "Show derogs for associated persons"',
+            'answer': 'Ask me a question about the graph! For example: "Who is the main passenger?" or "Show derogs for co-travelers"',
         })
 
     # Extract and run Cypher
