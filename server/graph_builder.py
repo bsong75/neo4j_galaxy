@@ -4,8 +4,27 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+_indexes_created = False
+
+
+def ensure_indexes(driver) -> None:
+    """Create indexes on frequently queried properties (runs once per process)."""
+    global _indexes_created
+    if _indexes_created:
+        return
+    with driver.session() as session:
+        session.run("CREATE INDEX IF NOT EXISTS FOR (mp:MainPassenger) ON (mp.upid)").consume()
+        session.run("CREATE INDEX IF NOT EXISTS FOR (mp:MainPassenger) ON (mp.id)").consume()
+        session.run("CREATE INDEX IF NOT EXISTS FOR (mp:MainPassenger) ON (mp.created_at)").consume()
+        session.run("CREATE INDEX IF NOT EXISTS FOR (ap:AssociatedPerson) ON (ap.id)").consume()
+    _indexes_created = True
+    logger.info("Neo4j indexes ensured")
+
+
 def graph_is_fresh(driver, upid: str, max_age_hours: int = 24) -> bool:
     """Return True if a graph for this UPID exists and is less than max_age_hours old."""
+    ensure_indexes(driver)
+
     from datetime import timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
 
@@ -216,6 +235,7 @@ def _build_co_travelers(session, data, upid, now):
             MATCH (mp:MainPassenger {id: $upid})
             CREATE (ap:AssociatedPerson {
                 id: $ap_id,
+                unf_psngr_id: $unf_psngr_id,
                 first_name: $first_name,
                 last_name: $last_name,
                 dob: $dob,
@@ -226,6 +246,7 @@ def _build_co_travelers(session, data, upid, now):
             CREATE (mp)-[:CO_TRAVELER]->(ap)
         """, upid=upid, now=now,
              ap_id=ap_id,
+             unf_psngr_id=str(ct.get('UNF_PSNGR_ID', '')),
              first_name=ct.get('FRST_NM', ''),
              last_name=ct.get('LST_NM', ''),
              dob=ct.get('DOB_DT', '')).consume()
@@ -247,6 +268,7 @@ def _build_co_travelers(session, data, upid, now):
                 MATCH (parent_ap:AssociatedPerson {id: $ap_id})
                 CREATE (ap:AssociatedPerson {
                     id: $sub_ap_id,
+                    unf_psngr_id: $unf_psngr_id,
                     first_name: $first_name,
                     last_name: $last_name,
                     dob: $dob,
@@ -257,6 +279,7 @@ def _build_co_travelers(session, data, upid, now):
                 CREATE (parent_ap)-[:CO_TRAVELER]->(ap)
             """, ap_id=ap_id, upid=upid, now=now,
                  sub_ap_id=sub_ap_id,
+                 unf_psngr_id=str(sub_ct.get('UNF_PSNGR_ID', '')),
                  first_name=sub_ct.get('FRST_NM', ''),
                  last_name=sub_ct.get('LST_NM', ''),
                  dob=sub_ct.get('DOB_DT', '')).consume()

@@ -93,8 +93,60 @@ def _load_from_file(upid: str) -> dict | None:
     return None
 
 
+_es_index_verified = False
+
+INDEX_MAPPING = {
+    'mappings': {
+        'properties': {
+            'UNF_PSNGR_ID': {'type': 'keyword'},
+            'FRST_NM': {'type': 'keyword'},
+            'LST_NM': {'type': 'keyword'},
+            'DOB_DT': {'type': 'keyword'},
+            'CTZNSHP_CTRY_CD': {'type': 'keyword'},
+            'GNDR_CD': {'type': 'keyword'},
+            'doc_id': {'type': 'keyword'},
+            'ingested_ts': {'type': 'date'},
+            'BIRTH_LOC': {'type': 'object', 'enabled': False},
+            'PHONE_NUMBERS': {'type': 'object', 'enabled': False},
+            'ADDRESSES': {'type': 'object', 'enabled': False},
+            'SEACATS': {'type': 'object', 'enabled': False},
+            'UNF_PRSN_CO_TRAVELERS': {'type': 'object', 'enabled': False},
+        },
+    },
+}
+
+
+def _ensure_index(es) -> None:
+    """Ensure the pax_data index exists with the correct mapping.
+
+    If the index has a bad mapping (e.g. auto-mapped nested fields),
+    it is deleted and recreated with the correct explicit mapping.
+    """
+    global _es_index_verified
+    if _es_index_verified:
+        return
+
+    if es.indices.exists(index=PAX_INDEX):
+        # Verify the mapping is correct (UNF_PRSN_CO_TRAVELERS should have enabled=false)
+        mapping = es.indices.get_mapping(index=PAX_INDEX)
+        props = mapping[PAX_INDEX]['mappings'].get('properties', {})
+        co_trav = props.get('UNF_PRSN_CO_TRAVELERS', {})
+        if co_trav.get('enabled') is False:
+            _es_index_verified = True
+            return
+        # Bad mapping — delete and recreate
+        logger.warning(f"Index {PAX_INDEX} has incorrect mapping, recreating")
+        es.indices.delete(index=PAX_INDEX)
+
+    es.indices.create(index=PAX_INDEX, body=INDEX_MAPPING)
+    _es_index_verified = True
+    logger.info(f"Created Elasticsearch index: {PAX_INDEX}")
+
+
 def _ingest_to_es(es, upid: str, data: dict) -> None:
     """Index passenger data into Elasticsearch with metadata."""
+    _ensure_index(es)
+
     doc_id = str(uuid.uuid4())
     doc = {
         **data,
